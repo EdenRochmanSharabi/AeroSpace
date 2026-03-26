@@ -48,13 +48,20 @@ private func rescueLostWindows() {
 @MainActor
 private func demoteInactiveTabs() {
     for workspace in Workspace.all {
+        // Count tiled windows per app in this workspace BEFORE demoting
+        var tiledCountPerApp: [Int32: Int] = [:]
+        for window in workspace.allLeafWindowsRecursive {
+            guard let macWindow = window as? MacWindow else { continue }
+            tiledCountPerApp[macWindow.macApp.pid, default: 0] += 1
+        }
+
         for window in Array(workspace.allLeafWindowsRecursive) {
             guard let macWindow = window as? MacWindow else { continue }
             // NEVER demote a window that is on-screen
             if isWindowOnScreen(macWindow.windowId) { continue }
+            // NEVER demote if it's the only tiled window for this app
+            if (tiledCountPerApp[macWindow.macApp.pid] ?? 0) <= 1 { continue }
             // Only demote if the app has another window that IS on-screen
-            let appCount = windowCountForApp(pid: macWindow.macApp.pid)
-            if appCount <= 1 { continue }
             let appHasOnScreenWindow = MacWindow.allWindows.contains {
                 $0.macApp.pid == macWindow.macApp.pid &&
                 $0.windowId != macWindow.windowId &&
@@ -62,6 +69,7 @@ private func demoteInactiveTabs() {
             }
             if appHasOnScreenWindow {
                 nativeTabWindowIds.insert(macWindow.windowId)
+                tiledCountPerApp[macWindow.macApp.pid, default: 0] -= 1
                 macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
         }
