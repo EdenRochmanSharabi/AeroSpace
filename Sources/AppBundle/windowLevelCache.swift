@@ -60,6 +60,16 @@ func refreshNativeTabDetection() {
     refreshCgWindowInfoCache()
 }
 
+/// Check if a window is currently on-screen according to CG cache.
+@MainActor
+func isWindowOnScreen(_ windowId: UInt32) -> Bool {
+    cgWindowInfoCache[windowId] != nil
+}
+
+/// Set of window IDs that were detected as native tabs at registration time.
+/// Once a window is identified as a tab, it stays a tab until it's garbage collected.
+@MainActor var nativeTabWindowIds: Set<UInt32> = []
+
 /// Count how many windows AeroSpace knows about for a given app PID.
 /// Includes tiled, floating, and popup windows.
 @MainActor
@@ -72,8 +82,9 @@ func windowCountForApp(pid: pid_t) -> Int {
 /// but another window from the same app IS on screen, it's likely an inactive native tab.
 /// https://github.com/nikitabobko/AeroSpace/issues/68
 ///
-/// Additional safety: only consider a window as a tab if the same app has at least one OTHER
-/// window on-screen with the same PID. This prevents false positives when CG is slow to update.
+/// Key safety check: only detect tabs when the app has MORE AeroSpace windows than CG on-screen
+/// windows. This prevents false positives with separate windows of the same app (e.g. 2 Finder
+/// windows at different positions) where one is temporarily off-screen due to CG lag.
 @MainActor
 func isLikelyNativeTab(windowId: UInt32, appPid: pid_t, appWindowCount: Int) -> Bool {
     // If the app only has 1 window known to AeroSpace, it can't be a tab
@@ -82,14 +93,18 @@ func isLikelyNativeTab(windowId: UInt32, appPid: pid_t, appWindowCount: Int) -> 
     // If this window IS on screen, it's either a real window or the active tab — tile it normally.
     if cgWindowInfoCache[windowId] != nil { return false }
 
-    // This window is NOT on screen. Check if the same app has at least one normal window on screen.
-    // If so, this off-screen window is likely an inactive native tab.
-    for (otherId, info) in cgWindowInfoCache {
-        if otherId != windowId && info.ownerPid == appPid && info.level == .normalWindow {
-            return true
-        }
-    }
-    return false
+    // Count how many windows from this app CG reports as on-screen
+    let cgOnScreenCount = cgWindowInfoCache.values.count(where: { $0.ownerPid == appPid && $0.level == .normalWindow })
+
+    // If CG shows 0 on-screen windows for this app, it's likely a CG lag — don't mark as tab
+    if cgOnScreenCount == 0 { return false }
+
+    // If CG on-screen count >= total AeroSpace windows, all windows are real (no tabs)
+    // This prevents false positives with separate windows (e.g. 2 Finder windows)
+    if cgOnScreenCount >= appWindowCount { return false }
+
+    // CG shows fewer on-screen windows than AeroSpace knows about → excess are tabs
+    return true
 }
 
 enum MacOsWindowLevel: Sendable, Equatable {
