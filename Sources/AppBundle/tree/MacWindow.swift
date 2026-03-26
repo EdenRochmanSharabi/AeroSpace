@@ -80,6 +80,11 @@ final class MacWindow: Window {
             return
         }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
+        // Save position for tab position preservation before unbinding
+        if let parent = self.parent as? NonLeafTreeNodeObject, let index = self.ownIndex,
+           windowCountForApp(pid: macApp.pid) > 1 {
+            lastKnownTabPositions[macApp.pid] = SavedTabPosition(parent: parent, index: index)
+        }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
         let focus = focus

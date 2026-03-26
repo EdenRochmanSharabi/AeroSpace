@@ -10,11 +10,16 @@ func normalizeLayoutReason() async throws {
     try await promoteActiveWindows(savedPositions: savedPositions)
 }
 
-/// Saved position of a demoted tab, keyed by app PID.
-private struct SavedTabPosition {
+/// Saved position of a demoted or closed tab, keyed by app PID.
+/// Persists across refresh cycles so that closing a tab also preserves position.
+struct SavedTabPosition {
     let parent: NonLeafTreeNodeObject
     let index: Int
 }
+
+/// Global cache of last known positions for tab windows, keyed by app PID.
+/// Updated when tabs are demoted or when tab windows are garbage collected.
+@MainActor var lastKnownTabPositions: [Int32: SavedTabPosition] = [:]
 
 /// Demote tiled windows that have become inactive native tabs to popup container.
 /// Returns a map of app PID → position where the demoted tab was, so the newly
@@ -27,9 +32,11 @@ private func demoteInactiveTabs() -> [Int32: SavedTabPosition] {
         for window in Array(workspace.allLeafWindowsRecursive) {
             guard let macWindow = window as? MacWindow else { continue }
             if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid, appWindowCount: windowCountForApp(pid: macWindow.macApp.pid)) {
-                // Save position before demoting
+                // Save position before demoting (both local and global)
                 if let parent = macWindow.parent as? NonLeafTreeNodeObject, let index = macWindow.ownIndex {
-                    savedPositions[macWindow.macApp.pid] = SavedTabPosition(parent: parent, index: index)
+                    let pos = SavedTabPosition(parent: parent, index: index)
+                    savedPositions[macWindow.macApp.pid] = pos
+                    lastKnownTabPositions[macWindow.macApp.pid] = pos
                 }
                 macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
@@ -51,8 +58,11 @@ private func promoteActiveWindows(savedPositions: [Int32: SavedTabPosition]) asy
         if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid, appWindowCount: windowCountForApp(pid: popup.macApp.pid)) { continue }
 
         // Check if there's a saved position from a demoted tab of the same app
-        if let saved = savedPositions[popup.macApp.pid] {
-            popup.bind(to: saved.parent, adaptiveWeight: WEIGHT_AUTO, index: saved.index)
+        // First check this-cycle positions, then fall back to global cache (covers tab close)
+        if let saved = savedPositions[popup.macApp.pid] ?? lastKnownTabPositions[popup.macApp.pid] {
+            let idx = min(saved.index, saved.parent.children.count)
+            popup.bind(to: saved.parent, adaptiveWeight: WEIGHT_AUTO, index: idx)
+            lastKnownTabPositions.removeValue(forKey: popup.macApp.pid)
             continue
         }
 
