@@ -5,68 +5,55 @@ func normalizeLayoutReason() async throws {
         try await _normalizeLayoutReason(workspace: workspace, windows: windows)
     }
     try await _normalizeLayoutReason(workspace: focus.workspace, windows: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
-    refreshNativeTabDetection()
-    let savedPositions = demoteInactiveTabs()
-    try await promoteActiveWindows(savedPositions: savedPositions)
+    handleNativeTabSwitch()
+    try await validatePopups()
 }
 
-/// Saved position of a demoted or closed tab, keyed by app PID.
-/// Persists across refresh cycles so that closing a tab also preserves position.
-struct SavedTabPosition {
-    let parent: NonLeafTreeNodeObject
-    let index: Int
-}
-
-/// Global cache of last known positions for tab windows, keyed by app PID.
-/// Updated when tabs are demoted or when tab windows are garbage collected.
-@MainActor var lastKnownTabPositions: [Int32: SavedTabPosition] = [:]
-
-/// Demote tiled windows that have become inactive native tabs to popup container.
-/// Returns a map of app PID → position where the demoted tab was, so the newly
-/// active tab can be inserted at the same position (preserving layout order).
+/// Handle native tab switches by detecting when the focused window is a known tab in popup.
+/// Swap it atomically with the currently tiled tab from the same app — no CG queries needed.
 /// https://github.com/nikitabobko/AeroSpace/issues/68
 @MainActor
-private func demoteInactiveTabs() -> [Int32: SavedTabPosition] {
-    var savedPositions: [Int32: SavedTabPosition] = [:]
+private func handleNativeTabSwitch() {
+    guard let focusedWindow = focus.windowOrNil as? MacWindow else { return }
+
+    // Is the focused window a known tab sitting in the popup container?
+    guard nativeTabWindowIds.contains(focusedWindow.windowId) else { return }
+    guard let parentCases = focusedWindow.parent?.cases else { return }
+    switch parentCases {
+        case .macosPopupWindowsContainer: break // It's in popup — proceed with swap
+        default: return // Already tiled or somewhere else — nothing to do
+    }
+
+    // Find the currently tiled tab from the same app to swap with
     for workspace in Workspace.all {
         for window in Array(workspace.allLeafWindowsRecursive) {
-            guard let macWindow = window as? MacWindow else { continue }
-            if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid, appWindowCount: windowCountForApp(pid: macWindow.macApp.pid)) {
-                // Save position before demoting (both local and global)
-                if let parent = macWindow.parent as? NonLeafTreeNodeObject, let index = macWindow.ownIndex {
-                    let pos = SavedTabPosition(parent: parent, index: index)
-                    savedPositions[macWindow.macApp.pid] = pos
-                    lastKnownTabPositions[macWindow.macApp.pid] = pos
+            guard let tiledTab = window as? MacWindow else { continue }
+            if tiledTab.macApp.pid == focusedWindow.macApp.pid &&
+               nativeTabWindowIds.contains(tiledTab.windowId) {
+                // Atomic swap: save position, demote old, promote new at same position
+                let parent = tiledTab.parent
+                let index = tiledTab.ownIndex
+                tiledTab.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                if let parent, let index {
+                    focusedWindow.bind(to: parent, adaptiveWeight: WEIGHT_AUTO, index: index)
                 }
-                macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                return
             }
         }
     }
-    return savedPositions
+
+    // No tiled tab from same app found (e.g. all tabs were closed except this one).
+    // Promote normally.
+    focusedWindow.bindAsFloatingWindow(to: focus.workspace)
 }
 
-/// Promote popup windows that are actually real windows (or newly active tabs).
-/// If a saved position exists for the app, insert the promoted window there.
-/// https://github.com/nikitabobko/AeroSpace/issues/68
+/// Promote popup windows that are real windows (not tabs, not scratchpad).
 @MainActor
-private func promoteActiveWindows(savedPositions: [Int32: SavedTabPosition]) async throws {
+private func validatePopups() async throws {
     for node in Array(macosPopupWindowsContainer.children) {
         guard let popup = node as? MacWindow else { continue }
-        // Don't promote scratchpad windows
         if scratchpadWindowIds.contains(popup.windowId) { continue }
-        // Don't promote inactive native tabs
-        if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid, appWindowCount: windowCountForApp(pid: popup.macApp.pid)) { continue }
-
-        // Check if there's a saved position from a demoted tab of the same app
-        // First check this-cycle positions, then fall back to global cache (covers tab close)
-        if let saved = savedPositions[popup.macApp.pid] ?? lastKnownTabPositions[popup.macApp.pid] {
-            let idx = min(saved.index, saved.parent.children.count)
-            popup.bind(to: saved.parent, adaptiveWeight: WEIGHT_AUTO, index: idx)
-            lastKnownTabPositions.removeValue(forKey: popup.macApp.pid)
-            continue
-        }
-
-        // No saved position — promote normally (new window, not a tab swap)
+        if nativeTabWindowIds.contains(popup.windowId) { continue }
         let windowLevel = getWindowLevel(for: popup.windowId)
         if try await popup.isWindowHeuristic(windowLevel) {
             try await popup.relayoutWindow(on: focus.workspace)
@@ -113,9 +100,9 @@ func exitMacOsNativeUnconventionalState(window: Window, prevParentKind: NonLeafT
             window.bindAsFloatingWindow(to: workspace)
         case .tilingContainer:
             try await window.relayoutWindow(on: workspace, forceTile: true)
-        case .macosPopupWindowsContainer: // Since the window was minimized/fullscreened it was mistakenly detected as popup. Relayout the window
+        case .macosPopupWindowsContainer:
             try await window.relayoutWindow(on: workspace)
-        case .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer, .macosHiddenAppsWindowsContainer: // wtf case, should never be possible. But If encounter it, let's just re-layout window
+        case .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer, .macosHiddenAppsWindowsContainer:
             try await window.relayoutWindow(on: workspace)
     }
 }

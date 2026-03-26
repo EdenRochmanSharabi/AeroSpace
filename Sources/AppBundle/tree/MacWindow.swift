@@ -79,12 +79,8 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
+        nativeTabWindowIds.remove(windowId)
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
-        // Save position for tab position preservation before unbinding
-        if let parent = self.parent as? NonLeafTreeNodeObject, let index = self.ownIndex,
-           windowCountForApp(pid: macApp.pid) > 1 {
-            lastKnownTabPositions[macApp.pid] = SavedTabPosition(parent: parent, index: index)
-        }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
         let focus = focus
@@ -218,12 +214,20 @@ extension Window {
 private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ workspace: Workspace, window: Window?) async throws -> BindingData {
     let windowLevel = getWindowLevel(for: windowId)
 
-    // Tab detection heuristic: if a window is not on screen but the same app has an
-    // on-screen window, it's likely an inactive macOS native tab.
+    // Tab detection: if a new window from the same app has identical AX bounds
+    // as an existing window, it's a native macOS tab (they share the same window frame).
+    // This detection happens BEFORE tiling, so bounds are still original/matching.
     // https://github.com/nikitabobko/AeroSpace/issues/68
-    refreshNativeTabDetection()
-    if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid, appWindowCount: windowCountForApp(pid: macApp.pid)) {
-        return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+    if let newRect = try await macApp.getAxRect(windowId) {
+        for existingWindow in MacWindow.allWindows {
+            if existingWindow.macApp.pid == macApp.pid && existingWindow.windowId != windowId {
+                if let existingRect = try await existingWindow.getAxRect(),
+                   rectsApproxEqual(newRect, existingRect) {
+                    nativeTabWindowIds.insert(windowId)
+                    return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                }
+            }
+        }
     }
 
     return switch try await macApp.getAxUiElementWindowType(windowId, windowLevel) {
