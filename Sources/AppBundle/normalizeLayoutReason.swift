@@ -5,8 +5,67 @@ func normalizeLayoutReason() async throws {
         try await _normalizeLayoutReason(workspace: workspace, windows: windows)
     }
     try await _normalizeLayoutReason(workspace: focus.workspace, windows: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
+    cleanupStaleTabIds()
+    refreshNativeTabDetection()
+    demoteInactiveTabs()
     handleNativeTabSwitch()
+    rescueLostWindows()
     try await validatePopups()
+}
+
+/// Remove stale entries from nativeTabWindowIds.
+/// If a window is the only one from its app in allWindowsMap, it's not a tab anymore.
+@MainActor
+private func cleanupStaleTabIds() {
+    // Remove IDs for windows that no longer exist
+    nativeTabWindowIds = nativeTabWindowIds.filter { MacWindow.allWindowsMap[$0] != nil }
+
+    // If an app only has 1 window left, it can't be a tab
+    for windowId in Array(nativeTabWindowIds) {
+        guard let window = MacWindow.allWindowsMap[windowId] else { continue }
+        if windowCountForApp(pid: window.macApp.pid) <= 1 {
+            nativeTabWindowIds.remove(windowId)
+        }
+    }
+}
+
+/// Safety net: if a window is on-screen (CG) but not in any workspace or popup, re-add it.
+@MainActor
+private func rescueLostWindows() {
+    refreshNativeTabDetection()
+    for window in MacWindow.allWindows {
+        let hasParent = window.parent != nil
+        if !hasParent && isWindowOnScreen(window.windowId) {
+            // Window is lost — re-tile it
+            window.bindAsFloatingWindow(to: focus.workspace)
+            nativeTabWindowIds.remove(window.windowId)
+        }
+    }
+}
+
+/// Demote tiled windows that are no longer on-screen but their app has an on-screen window.
+/// These are background native tabs that should not be tiled.
+@MainActor
+private func demoteInactiveTabs() {
+    for workspace in Workspace.all {
+        for window in Array(workspace.allLeafWindowsRecursive) {
+            guard let macWindow = window as? MacWindow else { continue }
+            // NEVER demote a window that is on-screen
+            if isWindowOnScreen(macWindow.windowId) { continue }
+            // Only demote if the app has another window that IS on-screen
+            let appCount = windowCountForApp(pid: macWindow.macApp.pid)
+            if appCount <= 1 { continue }
+            let appHasOnScreenWindow = MacWindow.allWindows.contains {
+                $0.macApp.pid == macWindow.macApp.pid &&
+                $0.windowId != macWindow.windowId &&
+                isWindowOnScreen($0.windowId)
+            }
+            if appHasOnScreenWindow {
+                nativeTabWindowIds.insert(macWindow.windowId)
+                macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+            }
+        }
+    }
 }
 
 /// Handle native tab switches by detecting when the focused window is a known tab in popup.
