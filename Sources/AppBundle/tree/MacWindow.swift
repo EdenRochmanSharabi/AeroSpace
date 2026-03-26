@@ -211,20 +211,37 @@ extension Window {
 private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ workspace: Workspace, window: Window?) async throws -> BindingData {
     let windowLevel = getWindowLevel(for: windowId)
 
-    // Tab detection: if a new window from the same app has identical AX bounds
-    // as an existing window, it's a native macOS tab (they share the same window frame).
-    // This detection happens BEFORE tiling, so bounds are still original/matching.
+    // Tab detection heuristic #1: bounds comparison.
+    // If a new window has identical AX bounds to an existing window from the same app,
+    // it's a native macOS tab (tabs share the same window frame).
     // https://github.com/nikitabobko/AeroSpace/issues/68
+    var detectedAsTab = false
     if let newRect = try await macApp.getAxRect(windowId) {
         for existingWindow in MacWindow.allWindows {
             if existingWindow.macApp.pid == macApp.pid && existingWindow.windowId != windowId {
                 if let existingRect = try await existingWindow.getAxRect(),
                    rectsApproxEqual(newRect, existingRect) {
-                    nativeTabWindowIds.insert(windowId)
-                    return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                    detectedAsTab = true
+                    break
                 }
             }
         }
+    }
+
+    // Tab detection heuristic #2 (fallback): CG on-screen check.
+    // If the window is NOT on-screen but another window from the same app IS, it's a tab.
+    // This catches cases where AeroSpace already moved the existing tab (bounds don't match).
+    if !detectedAsTab {
+        refreshNativeTabDetection()
+        let appCount = windowCountForApp(pid: macApp.pid)
+        if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid, appWindowCount: appCount) {
+            detectedAsTab = true
+        }
+    }
+
+    if detectedAsTab {
+        nativeTabWindowIds.insert(windowId)
+        return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
     }
 
     return switch try await macApp.getAxUiElementWindowType(windowId, windowLevel) {
