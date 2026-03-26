@@ -5,43 +5,84 @@ func normalizeLayoutReason() async throws {
         try await _normalizeLayoutReason(workspace: workspace, windows: windows)
     }
     try await _normalizeLayoutReason(workspace: focus.workspace, windows: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
-    try await demoteNativeTabsToPopup()
-    try await validateStillPopups()
+    try await handleNativeTabsAndPopups()
+    // CG window list may lag behind AX events on tab switches.
+    // Only do a second pass if there are popup windows that might be pending promotion.
+    if !macosPopupWindowsContainer.children.isEmpty {
+        try await Task.sleep(nanoseconds: 300_000_000) // 300ms
+        try await handleNativeTabsAndPopups()
+    }
 }
 
-/// Move tiled windows that have become inactive native tabs to the popup container.
-/// This handles the case where a tiled window becomes a background tab after the user opens a new tab.
+@MainActor private var nativeTabRecheckTask: Task<(), any Error>? = nil
+
+@MainActor
+private func scheduleNativeTabRecheck() {
+    nativeTabRecheckTask?.cancel()
+    nativeTabRecheckTask = Task { @MainActor in
+        try await Task.sleep(nanoseconds: 250_000_000) // 250ms
+        try Task.checkCancellation()
+        try await handleNativeTabsAndPopups()
+    }
+}
+
+/// Handle native tab detection and popup validation in a single pass.
+/// When a tab switch happens, swap the inactive tab with the active one in-place
+/// to preserve window positions in the tiling tree.
 /// https://github.com/nikitabobko/AeroSpace/issues/68
 @MainActor
-private func demoteNativeTabsToPopup() async throws {
+private func handleNativeTabsAndPopups() async throws {
+    // Refresh CG cache ONCE for consistent tab detection throughout this function
+    refreshNativeTabDetection()
+
+    // Phase 1: Find popup windows that should be promoted (newly active tabs or real windows)
+    // Use Array() snapshot to avoid mutation during iteration
+    for node in Array(macosPopupWindowsContainer.children) {
+        guard let popup = node as? MacWindow else { continue }
+
+        // Skip scratchpad windows
+        if scratchpadWindowIds.contains(popup.windowId) { continue }
+
+        // Skip windows that are still inactive tabs
+        if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid) { continue }
+
+        // This popup should be promoted. Check if it's replacing a tiled inactive tab from the same app.
+        var swapped = false
+        for workspace in Workspace.all {
+            for window in workspace.allLeafWindowsRecursive {
+                guard let tiledWindow = window as? MacWindow else { continue }
+                if tiledWindow.macApp.pid == popup.macApp.pid &&
+                   isLikelyNativeTab(windowId: tiledWindow.windowId, appPid: tiledWindow.macApp.pid) {
+                    // Swap: put popup in the tiled window's position, demote tiled window
+                    let parent = tiledWindow.parent
+                    let index = tiledWindow.ownIndex
+                    tiledWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                    if let parent, let index {
+                        popup.bind(to: parent, adaptiveWeight: WEIGHT_AUTO, index: index)
+                    }
+                    swapped = true
+                    break
+                }
+            }
+            if swapped { break }
+        }
+
+        if !swapped {
+            let windowLevel = getWindowLevel(for: popup.windowId)
+            if try await popup.isWindowHeuristic(windowLevel) {
+                try await popup.relayoutWindow(on: focus.workspace)
+                try await tryOnWindowDetected(popup)
+            }
+        }
+    }
+
+    // Phase 2: Demote any remaining tiled windows that are now inactive tabs
     for workspace in Workspace.all {
-        for window in workspace.allLeafWindowsRecursive {
+        for window in Array(workspace.allLeafWindowsRecursive) {
             guard let macWindow = window as? MacWindow else { continue }
             if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid) {
                 macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
-        }
-    }
-}
-
-@MainActor
-private func validateStillPopups() async throws {
-    for node in macosPopupWindowsContainer.children {
-        let popup = (node as! MacWindow)
-        // Don't promote native tabs back to tiling — they were intentionally placed in popup container
-        // https://github.com/nikitabobko/AeroSpace/issues/68
-        if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid) {
-            continue
-        }
-        // Don't promote scratchpad windows back to tiling
-        // https://github.com/nikitabobko/AeroSpace/issues/272
-        if scratchpadWindowIds.contains(popup.windowId) {
-            continue
-        }
-        let windowLevel = getWindowLevel(for: popup.windowId)
-        if try await popup.isWindowHeuristic(windowLevel) {
-            try await popup.relayoutWindow(on: focus.workspace)
-            try await tryOnWindowDetected(popup)
         }
     }
 }

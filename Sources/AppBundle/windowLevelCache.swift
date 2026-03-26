@@ -54,13 +54,20 @@ func getWindowLevel(for windowId: UInt32) -> MacOsWindowLevel? {
     return levelCache[windowId]
 }
 
+/// Refresh the CG cache once, then use isLikelyNativeTab for consistent results within a single pass.
+@MainActor
+func refreshNativeTabDetection() {
+    refreshCgWindowInfoCache()
+}
+
 /// Detect macOS native tabs: the AX API reports tabs as separate windows, but only the active
 /// tab appears in CGWindowListCopyWindowInfo(.optionOnScreenOnly). If a window is NOT on screen
 /// but another window from the same app IS on screen, it's likely an inactive native tab.
 /// https://github.com/nikitabobko/AeroSpace/issues/68
 @MainActor
 func isLikelyNativeTab(windowId: UInt32, appPid: pid_t) -> Bool {
-    refreshCgWindowInfoCache()
+    // Note: caller should call refreshNativeTabDetection() once before a batch of calls.
+    // This avoids inconsistent CG cache state between calls.
 
     // If this window IS on screen, it's either a real window or the active tab — tile it normally.
     if cgWindowInfoCache[windowId] != nil { return false }
