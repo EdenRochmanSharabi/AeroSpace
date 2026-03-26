@@ -33,6 +33,11 @@ private func validateStillPopups() async throws {
         if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid) {
             continue
         }
+        // Don't promote scratchpad windows back to tiling
+        // https://github.com/nikitabobko/AeroSpace/issues/272
+        if scratchpadWindowIds.contains(popup.windowId) {
+            continue
+        }
         let windowLevel = getWindowLevel(for: popup.windowId)
         if try await popup.isWindowHeuristic(windowLevel) {
             try await popup.relayoutWindow(on: focus.workspace)
