@@ -19,7 +19,7 @@ private func validatePopups() async throws {
         // Don't promote scratchpad windows
         if scratchpadWindowIds.contains(popup.windowId) { continue }
         // Don't promote inactive native tabs
-        if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid) { continue }
+        if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid, appWindowCount: windowCountForApp(pid: popup.macApp.pid)) { continue }
         // This window is on-screen and should be promoted to tiling
         let windowLevel = getWindowLevel(for: popup.windowId)
         if try await popup.isWindowHeuristic(windowLevel) {
@@ -37,7 +37,7 @@ private func demoteInactiveTabs() {
     for workspace in Workspace.all {
         for window in Array(workspace.allLeafWindowsRecursive) {
             guard let macWindow = window as? MacWindow else { continue }
-            if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid) {
+            if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid, appWindowCount: windowCountForApp(pid: macWindow.macApp.pid)) {
                 macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
         }

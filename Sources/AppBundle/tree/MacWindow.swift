@@ -214,7 +214,7 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
     // on-screen window, it's likely an inactive macOS native tab.
     // https://github.com/nikitabobko/AeroSpace/issues/68
     refreshNativeTabDetection()
-    if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid) {
+    if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid, appWindowCount: windowCountForApp(pid: macApp.pid)) {
         return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
     }
 
