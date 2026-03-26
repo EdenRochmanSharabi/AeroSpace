@@ -53,6 +53,14 @@ enum GlobalObserver {
         nc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: onNotif)
         nc.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main, using: onNotif)
 
+        // Focus follows mouse: focus window under cursor on mouse move
+        // https://github.com/nikitabobko/AeroSpace/issues/12
+        NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
+            Task { @MainActor in
+                handleFocusFollowsMouse()
+            }
+        }
+
         NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { _ in
             // todo reduce number of refreshSession in the callback
             //  resetManipulatedWithMouseIfPossible might call its own refreshSession
