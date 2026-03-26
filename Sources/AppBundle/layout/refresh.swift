@@ -184,6 +184,12 @@ private func layoutWorkspaces() async throws {
     for workspace in Workspace.all where !workspace.isVisible {
         let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
         for window in workspace.allLeafWindowsRecursive {
+            // Sticky floating windows stay visible across workspace switches
+            // https://github.com/nikitabobko/AeroSpace/issues/2
+            if window.isSticky && window.isFloating {
+                (window as! MacWindow).unhideFromCorner()
+                continue
+            }
             try await (window as! MacWindow).hideInCorner(corner) // todo as!
         }
     }

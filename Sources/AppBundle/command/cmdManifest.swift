@@ -68,6 +68,8 @@ extension CmdArgs {
                 command = ScratchpadCommand(args: self as! ScratchpadCmdArgs)
             case .split:
                 command = SplitCommand(args: self as! SplitCmdArgs)
+            case .sticky:
+                command = StickyCommand(args: self as! StickyCmdArgs)
             case .subscribe:
                 die("subscribe is handled separately")
             case .summonWorkspace:
