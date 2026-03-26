@@ -236,7 +236,8 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
     // This catches cases where AeroSpace already moved the existing tab (bounds don't match).
     if !detectedAsTab {
         refreshNativeTabDetection()
-        let appCount = windowCountForApp(pid: macApp.pid)
+        // +1 because the window being registered isn't in allWindowsMap yet
+        let appCount = windowCountForApp(pid: macApp.pid) + 1
         if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid, appWindowCount: appCount) {
             detectedAsTab = true
         }
