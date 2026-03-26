@@ -126,6 +126,13 @@ let reload_config_help_generated = """
 let resize_help_generated = """
     USAGE: resize [-h|--help] [--window-id <window-id>] (smart|smart-opposite|width|height) [+|-]<number>
     """
+let scratchpad_help_generated = """
+    USAGE: scratchpad [-h|--help] [--window-id <window-id>] (show|move)
+
+    COMMANDS:
+      show    Toggle scratchpad window visibility on the focused workspace
+      move    Move the focused window to the scratchpad (hide it)
+    """
 let split_help_generated = """
     USAGE: split [-h|--help] [--window-id <window-id>] (horizontal|vertical|opposite)
     """
