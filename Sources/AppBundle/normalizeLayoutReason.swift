@@ -5,41 +5,62 @@ func normalizeLayoutReason() async throws {
         try await _normalizeLayoutReason(workspace: workspace, windows: windows)
     }
     try await _normalizeLayoutReason(workspace: focus.workspace, windows: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
-    try await validatePopups()
-    demoteInactiveTabs()
+    refreshNativeTabDetection()
+    let savedPositions = demoteInactiveTabs()
+    try await promoteActiveWindows(savedPositions: savedPositions)
+}
+
+/// Saved position of a demoted tab, keyed by app PID.
+private struct SavedTabPosition {
+    let parent: NonLeafTreeNodeObject
+    let index: Int
+}
+
+/// Demote tiled windows that have become inactive native tabs to popup container.
+/// Returns a map of app PID → position where the demoted tab was, so the newly
+/// active tab can be inserted at the same position (preserving layout order).
+/// https://github.com/nikitabobko/AeroSpace/issues/68
+@MainActor
+private func demoteInactiveTabs() -> [Int32: SavedTabPosition] {
+    var savedPositions: [Int32: SavedTabPosition] = [:]
+    for workspace in Workspace.all {
+        for window in Array(workspace.allLeafWindowsRecursive) {
+            guard let macWindow = window as? MacWindow else { continue }
+            if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid, appWindowCount: windowCountForApp(pid: macWindow.macApp.pid)) {
+                // Save position before demoting
+                if let parent = macWindow.parent as? NonLeafTreeNodeObject, let index = macWindow.ownIndex {
+                    savedPositions[macWindow.macApp.pid] = SavedTabPosition(parent: parent, index: index)
+                }
+                macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+            }
+        }
+    }
+    return savedPositions
 }
 
 /// Promote popup windows that are actually real windows (or newly active tabs).
+/// If a saved position exists for the app, insert the promoted window there.
 /// https://github.com/nikitabobko/AeroSpace/issues/68
 @MainActor
-private func validatePopups() async throws {
-    refreshNativeTabDetection()
+private func promoteActiveWindows(savedPositions: [Int32: SavedTabPosition]) async throws {
     for node in Array(macosPopupWindowsContainer.children) {
         guard let popup = node as? MacWindow else { continue }
         // Don't promote scratchpad windows
         if scratchpadWindowIds.contains(popup.windowId) { continue }
         // Don't promote inactive native tabs
         if isLikelyNativeTab(windowId: popup.windowId, appPid: popup.macApp.pid, appWindowCount: windowCountForApp(pid: popup.macApp.pid)) { continue }
-        // This window is on-screen and should be promoted to tiling
+
+        // Check if there's a saved position from a demoted tab of the same app
+        if let saved = savedPositions[popup.macApp.pid] {
+            popup.bind(to: saved.parent, adaptiveWeight: WEIGHT_AUTO, index: saved.index)
+            continue
+        }
+
+        // No saved position — promote normally (new window, not a tab swap)
         let windowLevel = getWindowLevel(for: popup.windowId)
         if try await popup.isWindowHeuristic(windowLevel) {
             try await popup.relayoutWindow(on: focus.workspace)
             try await tryOnWindowDetected(popup)
-        }
-    }
-}
-
-/// Demote tiled windows that have become inactive native tabs to popup container.
-/// https://github.com/nikitabobko/AeroSpace/issues/68
-@MainActor
-private func demoteInactiveTabs() {
-    refreshNativeTabDetection()
-    for workspace in Workspace.all {
-        for window in Array(workspace.allLeafWindowsRecursive) {
-            guard let macWindow = window as? MacWindow else { continue }
-            if isLikelyNativeTab(windowId: macWindow.windowId, appPid: macWindow.macApp.pid, appWindowCount: windowCountForApp(pid: macWindow.macApp.pid)) {
-                macWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-            }
         }
     }
 }
