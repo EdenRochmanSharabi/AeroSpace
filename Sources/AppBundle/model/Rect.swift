@@ -63,12 +63,3 @@ extension Rect {
 
     func getDimension(_ orientation: Orientation) -> CGFloat { orientation == .h ? width : height }
 }
-
-/// Check if two rects are approximately equal (within 2px tolerance).
-/// Native tabs share the same window frame, so their bounds are nearly identical.
-func rectsApproxEqual(_ a: Rect, _ b: Rect) -> Bool {
-    abs(a.topLeftX - b.topLeftX) <= 2 &&
-    abs(a.topLeftY - b.topLeftY) <= 2 &&
-    abs(a.width - b.width) <= 2 &&
-    abs(a.height - b.height) <= 2
-}

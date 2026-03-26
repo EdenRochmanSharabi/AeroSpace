@@ -79,7 +79,6 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
-        nativeTabWindowIds.remove(windowId)
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
@@ -211,37 +210,11 @@ extension Window {
 private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ workspace: Workspace, window: Window?) async throws -> BindingData {
     let windowLevel = getWindowLevel(for: windowId)
 
-    // Tab detection heuristic #1: bounds comparison.
-    // If a new window has identical AX bounds to an existing window from the same app,
-    // it's a native macOS tab (tabs share the same window frame).
+    // Tab detection heuristic: if a window is not on screen but the same app has an
+    // on-screen window, it's likely an inactive macOS native tab.
     // https://github.com/nikitabobko/AeroSpace/issues/68
-    var detectedAsTab = false
-    if let newRect = try await macApp.getAxRect(windowId) {
-        for existingWindow in MacWindow.allWindows {
-            if existingWindow.macApp.pid == macApp.pid && existingWindow.windowId != windowId {
-                if let existingRect = try await existingWindow.getAxRect(),
-                   rectsApproxEqual(newRect, existingRect) {
-                    detectedAsTab = true
-                    break
-                }
-            }
-        }
-    }
-
-    // Tab detection heuristic #2 (fallback): CG on-screen check.
-    // If the window is NOT on-screen but another window from the same app IS, it's a tab.
-    // This catches cases where AeroSpace already moved the existing tab (bounds don't match).
-    if !detectedAsTab {
-        refreshNativeTabDetection()
-        // +1 because the window being registered isn't in allWindowsMap yet
-        let appCount = windowCountForApp(pid: macApp.pid) + 1
-        if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid, appWindowCount: appCount) {
-            detectedAsTab = true
-        }
-    }
-
-    if detectedAsTab {
-        nativeTabWindowIds.insert(windowId)
+    refreshNativeTabDetection()
+    if isLikelyNativeTab(windowId: windowId, appPid: macApp.pid) {
         return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
     }
 
