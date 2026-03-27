@@ -175,6 +175,9 @@ private func layoutWorkspaces() async throws {
         monitorToOptimalHideCorner[monitor.rect.topLeftCorner] = corner
     }
 
+    // Smooth layout: pause screen rendering to prevent flicker during window moves
+    if SmoothLayout.enabled { SmoothLayout.disableUpdate() }
+
     // to reduce flicker, first unhide visible workspaces, then hide invisible ones
     for monitor in monitors {
         let workspace = monitor.activeWorkspace
@@ -192,6 +195,12 @@ private func layoutWorkspaces() async throws {
             }
             try await (window as! MacWindow).hideInCorner(corner) // todo as!
         }
+    }
+
+    // Smooth layout: wait briefly for async setFrame jobs to complete, then resume rendering
+    if SmoothLayout.enabled {
+        try await Task.sleep(nanoseconds: 50_000_000) // 50ms for AX calls to complete
+        SmoothLayout.reenableUpdate()
     }
 }
 
