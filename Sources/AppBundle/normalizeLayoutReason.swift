@@ -1,3 +1,7 @@
+/// Positions saved when tab windows are garbage collected (closed).
+/// Used by validatePopups to place the next tab at the same position.
+@MainActor var closedWindowPositions: [Int32: BindingData] = [:]
+
 @MainActor
 func normalizeLayoutReason() async throws {
     for workspace in Workspace.all {
@@ -6,7 +10,11 @@ func normalizeLayoutReason() async throws {
     }
     try await _normalizeLayoutReason(workspace: focus.workspace, windows: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
     let savedTabPositions = demoteInactiveTabs()
-    try await validatePopups(savedTabPositions: savedTabPositions)
+    // Merge: positions from demote + positions from garbage-collected windows
+    var allSavedPositions = closedWindowPositions
+    for (pid, data) in savedTabPositions { allSavedPositions[pid] = data }
+    closedWindowPositions = [:] // Clear after use
+    try await validatePopups(savedTabPositions: allSavedPositions)
 }
 
 /// Promote popup windows that are actually real windows (or newly active tabs).
