@@ -1,0 +1,37 @@
+= aerospace-sticky(1)
+include::util/man-attributes.adoc[]
+:manname: aerospace-sticky
+// tag::purpose[]
+:manpurpose: Toggle sticky mode for a floating window (visible across workspaces)
+// end::purpose[]
+
+// =========================================================== Synopsis
+== Synopsis
+[verse]
+// tag::synopsis[]
+aerospace sticky [-h|--help] [--window-id <window-id>] [on|off]
+// end::synopsis[]
+
+// =========================================================== Description
+== Description
+// tag::body[]
+{manpurpose}
+
+Sticky windows remain visible on the monitor regardless of which workspace is active.
+Only floating windows can be made sticky. Use `layout floating` first if the window is tiled.
+
+include::./util/conditional-options-header.adoc[]
+
+-h, --help:: Print help
+--window-id <window-id>::
+include::./util/window-id-flag-desc.adoc[]
+
+include::./util/conditional-arguments-header.adoc[]
+
+on, off::
+`on` makes the focused floating window sticky. `off` removes sticky mode.
+If neither is specified, sticky mode is toggled.
+
+// end::body[]
+
+include::util/man-footer.adoc[]
