@@ -145,6 +145,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "auto-reload-config": Parser(\.autoReloadConfig, parseBool),
     "automatically-unhide-macos-hidden-apps": Parser(\.automaticallyUnhideMacosHiddenApps, parseBool),
     "focus-follows-mouse": Parser(\.focusFollowsMouse, parseBool),
+    "smooth-layout": Parser(\.smoothLayout, parseBool),
     "accordion-padding": Parser(\.accordionPadding, parseInt),
     persistentWorkspacesKey: Parser(\.persistentWorkspaces, parsePersistentWorkspaces),
     "exec-on-workspace-change": Parser(\.execOnWorkspaceChange, parseArrayOfStrings),
@@ -308,13 +309,8 @@ struct ParseConfigResult {
             )]
         }
     }
-    if config.configVersion < .max {
-        let msg = "The current 'config-version = \(config.configVersion)' is outdated. " +
-            "Please consider migrating to 'config-version = \(ConfigVersion.max)'. " +
-            "See https://nikitabobko.github.io/AeroSpace/guide#config-version for the migration guide."
-        warnings.append(.init(.emptyRoot, msg))
-    }
-    return ParseConfigResult(config: config, errors: c.errors, warnings: warnings)
+    SmoothLayout.enabled = config.smoothLayout && SmoothLayout.isAvailable
+    return (config, errors)
 }
 
 func parseIndentForNestedContainersWithTheSameOrientation(_ _: OrderedJson, _ backtrace: ConfigBacktrace) -> ParsedConfig<Void> {

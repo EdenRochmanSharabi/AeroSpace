@@ -32,11 +32,36 @@ private func validatePopups(savedTabPositions: [Int32: BindingData]) async throw
         // This window is on-screen and should be promoted to tiling
         let windowLevel = getWindowLevel(for: popup.windowId)
         if try await popup.isWindowHeuristic(windowLevel) {
-            if let saved = savedTabPositions[popup.macApp.pid], saved.parent.isBound {
-                let idx = min(saved.index, saved.parent.children.count)
-                popup.bind(to: saved.parent, adaptiveWeight: saved.adaptiveWeight, index: idx)
-            } else {
-                try await popup.relayoutWindow(on: focus.workspace)
+            // Check if there's already a tiled window from the same app (the old tab).
+            // If so, swap: demote the old one and promote the new one at the same position.
+            var swapped = false
+            if savedTabPositions[popup.macApp.pid] == nil {
+                for workspace in Workspace.all {
+                    for window in Array(workspace.allLeafWindowsRecursive) {
+                        guard let tiledWindow = window as? MacWindow else { continue }
+                        if tiledWindow.macApp.pid == popup.macApp.pid && tiledWindow.windowId != popup.windowId {
+                            let parent = tiledWindow.parent
+                            let index = tiledWindow.ownIndex
+                            tiledWindow.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+                            if let parent, let index {
+                                let idx = min(index, parent.children.count)
+                                popup.bind(to: parent, adaptiveWeight: WEIGHT_AUTO, index: idx)
+                            }
+                            swapped = true
+                            break
+                        }
+                    }
+                    if swapped { break }
+                }
+            }
+
+            if !swapped {
+                if let saved = savedTabPositions[popup.macApp.pid], saved.parent.isBound {
+                    let idx = min(saved.index, saved.parent.children.count)
+                    popup.bind(to: saved.parent, adaptiveWeight: saved.adaptiveWeight, index: idx)
+                } else {
+                    try await popup.relayoutWindow(on: focus.workspace)
+                }
             }
             try await tryOnWindowDetected(popup)
         }
