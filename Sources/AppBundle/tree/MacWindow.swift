@@ -80,6 +80,11 @@ final class MacWindow: Window {
             return
         }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
+        // Save position before unbinding so the next tab can inherit it
+        if let tilingParent = self.parent as? TilingContainer, let index = self.ownIndex,
+           MacWindow.allWindows.count(where: { $0.macApp.pid == macApp.pid }) > 0 {
+            closedWindowPositions[macApp.pid] = BindingData(parent: tilingParent, adaptiveWeight: WEIGHT_AUTO, index: index)
+        }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
         let focus = focus
