@@ -2,6 +2,15 @@ import AppKit
 import Common
 import Network
 
+func exitIfAnotherInstanceIsRunning() async {
+    guard FileManager.default.fileExists(atPath: socketPath) else { return }
+    let connection = NWConnection(to: .unix(path: socketPath), using: .tcp)
+    defer { connection.cancel() }
+    if await connection.startBlocking().error == nil {
+        exit(0, err: "\(aeroSpaceAppName) is already running. Exiting duplicate instance.")
+    }
+}
+
 func startUnixSocketServer() {
     try? FileManager.default.removeItem(atPath: socketPath)
     let params = NWParameters.tcp

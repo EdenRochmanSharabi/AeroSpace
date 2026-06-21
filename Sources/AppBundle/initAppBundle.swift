@@ -16,6 +16,7 @@ import Foundation
         _ = try await reloadConfig()
 
         checkAccessibilityPermissions()
+        await exitIfAnotherInstanceIsRunning()
         startUnixSocketServer()
         GlobalObserver.initObserver()
         Workspace.garbageCollectUnusedWorkspaces() // init workspaces
